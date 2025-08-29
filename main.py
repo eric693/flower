@@ -26,8 +26,8 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # 管理員 LINE User ID（請替換為實際的管理員 LINE User ID）
-ADMIN_USER_IDS = ['Ud956df5564ad0c77eb2f849db0eccfeb','U215dfe5f0cdc8c5ddd970a5d2fb4b288']  # 可以設定多個管理員
-
+# ADMIN_USER_IDS = ['Ud956df5564ad0c77eb2f849db0eccfeb','U215dfe5f0cdc8c5ddd970a5d2fb4b288']  # 可以設定多個管理員
+ADMIN_USER_IDS = ['Ud956df5564ad0c77eb2f849db0eccfeb', 'Ud9d0c5237f9e5ec662d050328efe51b0']
 # 初始化資料庫
 def init_database():
     conn = sqlite3.connect('appointments.db')
@@ -1345,7 +1345,7 @@ def handle_message(event):
                 event.reply_token,
                 TextSendMessage(text=reply_text, quick_reply=create_course_menu())
             )
-        elif any(keyword in user_message for keyword in ["訂花", "花束", "買花束", "買花", "花禮", "訂購", "購買"]):
+        elif any(keyword in user_message for keyword in ["訂花", "花束", "買花束", "買花", "花禮", "訂購", "購買", "花"]):
             reply_text = "🌸 沒問題呀～你想要現貨款還是訂製款呢？\n\n🛍️ 現貨款：現有作品，可立即取貨\n🎨 訂製款：專屬設計，3-7個工作天完成\n\n歡迎告訴我你的需求！"
             line_bot_api.reply_message(
                 event.reply_token,
