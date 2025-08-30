@@ -26,8 +26,16 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # 管理員 LINE User ID（請替換為實際的管理員 LINE User ID）
-# ADMIN_USER_IDS = ['Ud956df5564ad0c77eb2f849db0eccfeb','U215dfe5f0cdc8c5ddd970a5d2fb4b288']  # 可以設定多個管理員
 ADMIN_USER_IDS = ['Ud956df5564ad0c77eb2f849db0eccfeb', 'Ud9d0c5237f9e5ec662d050328efe51b0']
+
+# 獲取用戶顯示名稱
+def get_user_display_name(user_id):
+    try:
+        profile = line_bot_api.get_profile(user_id)
+        return profile.display_name
+    except:
+        return "朋友"
+
 # 初始化資料庫
 def init_database():
     conn = sqlite3.connect('appointments.db')
@@ -78,6 +86,24 @@ def init_database():
         )
     ''')
     
+    # 新增訂製花禮記錄表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS custom_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_number TEXT UNIQUE NOT NULL,
+            user_id TEXT NOT NULL,
+            customer_name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            budget TEXT NOT NULL,
+            color_choice TEXT NOT NULL,
+            size_choice TEXT NOT NULL,
+            main_flower_count TEXT NOT NULL,
+            status TEXT DEFAULT 'processing',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -87,6 +113,13 @@ def generate_appointment_number():
     date_str = datetime.datetime.now().strftime("%Y%m%d")
     random_code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
     return f"FL{date_str}{random_code}"
+
+# 生成訂單編號
+def generate_order_number():
+    # 格式：EF + 年月日 + 4位隨機碼
+    date_str = datetime.datetime.now().strftime("%Y%m%d")
+    random_code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
+    return f"EF{date_str}{random_code}"
 
 # 檢查是否為管理員
 def is_admin(user_id):
@@ -116,6 +149,31 @@ def save_appointment(user_id, name, phone, pickup_date, pickup_time, order_detai
     conn.close()
     
     return appointment_number
+
+# 保存訂製花禮資料
+def save_custom_order(user_id, name, phone, budget, color_choice, size_choice, main_flower_count):
+    conn = sqlite3.connect('appointments.db')
+    cursor = conn.cursor()
+    
+    order_number = generate_order_number()
+    
+    # 確保訂單編號唯一
+    while True:
+        cursor.execute('SELECT id FROM custom_orders WHERE order_number = ?', (order_number,))
+        if cursor.fetchone() is None:
+            break
+        order_number = generate_order_number()
+    
+    cursor.execute('''
+        INSERT INTO custom_orders 
+        (order_number, user_id, customer_name, phone, budget, color_choice, size_choice, main_flower_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (order_number, user_id, name, phone, budget, color_choice, size_choice, main_flower_count))
+    
+    conn.commit()
+    conn.close()
+    
+    return order_number
 
 # 查詢預約資料 - 支援編號、姓名、日期查詢
 def search_appointments(query):
@@ -463,6 +521,15 @@ def create_course_menu():
     ])
     return quick_reply
 
+def create_order_type_menu():
+    """建立訂花類型選單"""
+    quick_reply = QuickReply(items=[
+        QuickReplyButton(action=MessageAction(label="📦 現貨款", text="現貨款")),
+        QuickReplyButton(action=MessageAction(label="🎨 訂製款", text="訂製款")),
+        QuickReplyButton(action=MessageAction(label="🔙 回主選單", text="主選單")),
+    ])
+    return quick_reply
+
 def create_appointment_confirmation_flex(appointment_data):
     """建立預約確認的 Flex Message"""
     bubble = BubbleContainer(
@@ -522,6 +589,70 @@ def create_appointment_confirmation_flex(appointment_data):
     )
     
     return FlexSendMessage(alt_text="預約確認", contents=bubble)
+
+def create_custom_order_confirmation_flex(order_data):
+    """建立訂製花禮確認的 Flex Message"""
+    bubble = BubbleContainer(
+        body=BoxComponent(
+            layout="vertical",
+            contents=[
+                TextComponent(
+                    text="🎨 訂製花禮確認",
+                    weight="bold",
+                    size="xl",
+                    color="#1DB446"
+                ),
+                SeparatorComponent(margin="md"),
+                TextComponent(
+                    text=f"訂單編號：{order_data['order_number']}",
+                    weight="bold",
+                    size="md",
+                    margin="lg",
+                    color="#FF6B35"
+                ),
+                TextComponent(
+                    text=f"姓名：{order_data['customer_name']}",
+                    size="sm",
+                    margin="sm"
+                ),
+                TextComponent(
+                    text=f"電話：{order_data['phone']}",
+                    size="sm",
+                    margin="sm"
+                ),
+                TextComponent(
+                    text=f"預算：{order_data['budget']}",
+                    size="sm",
+                    margin="sm"
+                ),
+                TextComponent(
+                    text=f"色系選擇：{order_data['color_choice']}",
+                    size="sm",
+                    margin="sm"
+                ),
+                TextComponent(
+                    text=f"尺寸選擇：{order_data['size_choice']}",
+                    size="sm",
+                    margin="sm"
+                ),
+                TextComponent(
+                    text=f"主花數量：{order_data['main_flower_count']}朵",
+                    size="sm",
+                    margin="sm"
+                ),
+                SeparatorComponent(margin="lg"),
+                TextComponent(
+                    text="💌 我們會依照您的需求進行設計，預計3-7個工作天完成，完成後會再聯繫您！",
+                    size="xs",
+                    color="#666666",
+                    margin="md",
+                    wrap=True
+                )
+            ]
+        )
+    )
+    
+    return FlexSendMessage(alt_text="訂製花禮確認", contents=bubble)
 
 def create_appointment_detail_flex(appointment):
     """建立預約詳細資訊的 Flex Message（管理員用）"""
@@ -849,7 +980,273 @@ def handle_message(event):
             )
             return
         
-        # 處理預約流程
+        # 處理訂製花禮流程
+        elif state == "waiting_custom_name":
+            user_states[user_id] = {"step": "waiting_custom_phone", "name": user_message}
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="📱 請提供您的聯絡電話：")
+            )
+            return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_custom_phone":
+            user_states[user_id]["phone"] = user_message
+            user_states[user_id]["step"] = "waiting_budget"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="💰 沒問題！客製款會依照您的預算、喜歡的色系、尺寸進行訂製～請問您預算大概多少呢？")
+            )
+            return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_budget":
+            user_states[user_id]["budget"] = user_message
+            user_states[user_id]["step"] = "waiting_color"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="🎨 請從下方圖片選擇喜歡的色系（請輸入對應數字）：\n\n1. 粉嫩色系（粉紅、米白、淺綠）\n2. 暖色調（橘紅、金黃、深紅）\n3. 冷色調（藍紫、淺紫、白色）\n4. 大地色系（咖啡、米色、深綠）\n5. 其他（請說明您想要的色系）")
+            )
+            return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_color":
+            color_choices = {
+                "1": "粉嫩色系（粉紅、米白、淺綠）",
+                "2": "暖色調（橘紅、金黃、深紅）", 
+                "3": "冷色調（藍紫、淺紫、白色）",
+                "4": "大地色系（咖啡、米色、深綠）",
+                "5": user_message if user_message != "5" else "其他色系"
+            }
+            
+            if user_message in ["1", "2", "3", "4"]:
+                color_choice = color_choices[user_message]
+            elif user_message == "5":
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="請說明您想要的色系：")
+                )
+                return
+            else:
+                color_choice = f"其他色系：{user_message}"
+            
+            user_states[user_id]["color_choice"] = color_choice
+            user_states[user_id]["step"] = "waiting_size"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="📏 請問您想要什麼尺寸呢～下面是大小的參考表（請輸入對應數字）：\n\n1. 迷你款（約15cm，適合桌上裝飾）\n2. 小型款（約20cm，適合個人收藏）\n3. 中型款（約30cm，適合送禮）\n4. 大型款（約40cm以上，適合重要場合）")
+            )
+            return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_size":
+            size_choices = {
+                "1": "迷你款（約15cm）",
+                "2": "小型款（約20cm）",
+                "3": "中型款（約30cm）", 
+                "4": "大型款（約40cm以上）"
+            }
+            
+            if user_message in size_choices:
+                size_choice = size_choices[user_message]
+            else:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="請輸入正確的數字選項（1-4）：")
+                )
+                return
+            
+            user_states[user_id]["size_choice"] = size_choice
+            user_states[user_id]["step"] = "waiting_flower_count"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="🌹 請問您主花想要有幾朵？（通常主花是玫瑰～所以就決定想要裡面有幾朵玫瑰就可以）")
+            )
+            return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_flower_count":
+            try:
+                flower_count = int(user_message)
+                if flower_count <= 0:
+                    raise ValueError()
+            except ValueError:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="請輸入正確的數字（例如：3、5、7）：")
+                )
+                return
+            
+            # 保存訂製花禮資料
+            order_number = save_custom_order(
+                user_id=user_id,
+                name=state["name"],
+                phone=state["phone"],
+                budget=state["budget"],
+                color_choice=state["color_choice"],
+                size_choice=state["size_choice"],
+                main_flower_count=str(flower_count)
+            )
+            
+            # 清除用戶狀態
+            del user_states[user_id]
+            
+            # 建立訂單確認資料
+            order_data = {
+                "order_number": order_number,
+                "customer_name": state["name"],
+                "phone": state["phone"],
+                "budget": state["budget"],
+                "color_choice": state["color_choice"],
+                "size_choice": state["size_choice"],
+                "main_flower_count": str(flower_count)
+            }
+            
+            # 建立包含來店自取選項的快速回覆
+            custom_order_complete_menu = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="🏪 來店自取", text="來店自取")),
+                QuickReplyButton(action=MessageAction(label="🔙 回主選單", text="主選單")),
+            ])
+            
+            # 回覆訂單確認
+            line_bot_api.reply_message(
+                event.reply_token,
+                [
+                    create_custom_order_confirmation_flex(order_data),
+                    TextSendMessage(
+                        text="🎉 訂製花禮需求已記錄完成！我們會依照您的需求進行設計，預計3-7個工作天完成，完成後會再聯繫您！\n\n我們的工作室採預約制（地址：新竹市和平路142號8樓）要來之前一定要預約哦～需要幫您預約嗎？",
+                        quick_reply=custom_order_complete_menu
+                    )
+                ]
+            )
+            return
+        
+        # 處理來店預約流程
+        elif state == "waiting_visit_name":
+            user_states[user_id] = {"step": "waiting_visit_phone", "name": user_message}
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="📱 請提供您的聯絡電話：")
+            )
+            return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_visit_phone":
+            user_states[user_id]["phone"] = user_message
+            user_states[user_id]["step"] = "waiting_visit_date"
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="📅 請提供您希望的來店日期（格式：YYYY-MM-DD，例如：2025-08-20）：")
+            )
+            return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_visit_date":
+            # 驗證日期格式
+            try:
+                pickup_date = None
+                # 支援多種日期格式
+                date_formats = [
+                    '%Y-%m-%d',    # 2025-08-20
+                    '%Y/%m/%d',    # 2025/08/20
+                    '%m/%d',       # 8/20
+                    '%m-%d'        # 8-20
+                ]
+                
+                for fmt in date_formats:
+                    try:
+                        if fmt in ['%m/%d', '%m-%d']:
+                            # 如果只有月日，補上當前年份
+                            current_year = datetime.datetime.now().year
+                            if '/' in user_message:
+                                full_date = f"{current_year}/{user_message}"
+                                pickup_date = datetime.datetime.strptime(full_date, f"%Y/{fmt}")
+                            else:
+                                full_date = f"{current_year}-{user_message}"
+                                pickup_date = datetime.datetime.strptime(full_date, f"%Y-{fmt}")
+                        else:
+                            pickup_date = datetime.datetime.strptime(user_message, fmt)
+                        break
+                    except ValueError:
+                        continue
+                
+                if pickup_date is None:
+                    raise ValueError("無效的日期格式")
+                
+                pickup_date = pickup_date.date()
+                today = datetime.date.today()
+                if pickup_date < today:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text="❌ 來店日期不能是過去的日期，請重新輸入：")
+                    )
+                    return
+                
+                user_states[user_id]["pickup_date"] = pickup_date.strftime('%Y-%m-%d')
+                user_states[user_id]["step"] = "waiting_visit_time"
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="🕐 請提供您希望的來店時間（格式：HH:MM，例如：14:30）：")
+                )
+                return
+            except ValueError:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="❌ 日期格式錯誤，請使用以下格式：\n• YYYY-MM-DD（例如：2025-08-20）\n• MM/DD（例如：8/20）\n• MM-DD（例如：8-20）")
+                )
+                return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_visit_time":
+            # 驗證時間格式
+            try:
+                datetime.datetime.strptime(user_message, "%H:%M")
+                user_states[user_id]["pickup_time"] = user_message
+                user_states[user_id]["step"] = "waiting_visit_purpose"
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="📝 請說明您的來店目的（例如：取花、參觀作品、諮詢等）：")
+                )
+                return
+            except ValueError:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="❌ 時間格式錯誤，請使用 HH:MM 格式（例如：14:30）：")
+                )
+                return
+        
+        elif isinstance(state, dict) and state.get("step") == "waiting_visit_purpose":
+            visit_purpose = user_message
+            
+            # 保存來店預約資料
+            appointment_number = save_appointment(
+                user_id=user_id,
+                name=state["name"],
+                phone=state["phone"],
+                pickup_date=state["pickup_date"],
+                pickup_time=state["pickup_time"],
+                order_details=f"來店目的：{visit_purpose}"
+            )
+            
+            # 清除用戶狀態
+            del user_states[user_id]
+            
+            # 建立預約確認資料
+            appointment_data = {
+                "appointment_number": appointment_number,
+                "customer_name": state["name"],
+                "phone": state["phone"],
+                "pickup_date": state["pickup_date"],
+                "pickup_time": state["pickup_time"],
+                "order_details": f"來店目的：{visit_purpose}"
+            }
+            
+            # 回覆預約確認
+            line_bot_api.reply_message(
+                event.reply_token,
+                [
+                    create_appointment_confirmation_flex(appointment_data),
+                    TextSendMessage(
+                        text="🎉 來店預約已成功建立！\n\n📍 地址：新竹市和平路142號8樓\n⏰ 請準時到達，我們會在您指定的時間等您。\n\n如需修改或取消預約，請直接聯繫我們。",
+                        quick_reply=create_main_menu()
+                    )
+                ]
+            )
+            return
+        
+        # 處理一般預約取花流程
         elif state == "waiting_name":
             user_states[user_id] = {"step": "waiting_phone", "name": user_message}
             line_bot_api.reply_message(
@@ -870,7 +1267,36 @@ def handle_message(event):
         elif isinstance(state, dict) and state.get("step") == "waiting_date":
             # 驗證日期格式
             try:
-                pickup_date = datetime.datetime.strptime(user_message, "%Y-%m-%d").date()
+                pickup_date = None
+                # 支援多種日期格式
+                date_formats = [
+                    '%Y-%m-%d',    # 2025-08-20
+                    '%Y/%m/%d',    # 2025/08/20
+                    '%m/%d',       # 8/20
+                    '%m-%d'        # 8-20
+                ]
+                
+                for fmt in date_formats:
+                    try:
+                        if fmt in ['%m/%d', '%m-%d']:
+                            # 如果只有月日，補上當前年份
+                            current_year = datetime.datetime.now().year
+                            if '/' in user_message:
+                                full_date = f"{current_year}/{user_message}"
+                                pickup_date = datetime.datetime.strptime(full_date, f"%Y/{fmt}")
+                            else:
+                                full_date = f"{current_year}-{user_message}"
+                                pickup_date = datetime.datetime.strptime(full_date, f"%Y-{fmt}")
+                        else:
+                            pickup_date = datetime.datetime.strptime(user_message, fmt)
+                        break
+                    except ValueError:
+                        continue
+                
+                if pickup_date is None:
+                    raise ValueError("無效的日期格式")
+                
+                pickup_date = pickup_date.date()
                 today = datetime.date.today()
                 if pickup_date < today:
                     line_bot_api.reply_message(
@@ -879,7 +1305,7 @@ def handle_message(event):
                     )
                     return
                 
-                user_states[user_id]["pickup_date"] = user_message
+                user_states[user_id]["pickup_date"] = pickup_date.strftime('%Y-%m-%d')
                 user_states[user_id]["step"] = "waiting_time"
                 line_bot_api.reply_message(
                     event.reply_token,
@@ -889,7 +1315,7 @@ def handle_message(event):
             except ValueError:
                 line_bot_api.reply_message(
                     event.reply_token,
-                    TextSendMessage(text="❌ 日期格式錯誤，請使用 YYYY-MM-DD 格式（例如：2025-08-20）：")
+                    TextSendMessage(text="❌ 日期格式錯誤，請使用以下格式：\n• YYYY-MM-DD（例如：2025-08-20）\n• MM/DD（例如：8/20）\n• MM-DD（例如：8-20）")
                 )
                 return
         
@@ -1012,11 +1438,14 @@ def handle_message(event):
     
     # 主選單或歡迎訊息
     if user_message in ["主選單", "選單", "menu", "開始", "hi", "hello", "你好"]:
-        reply_text = "🌺 歡迎來到花材小百科！\n請選擇你想了解的項目："
+        # 獲取用戶名稱並發送個人化歡迎訊息
+        user_name = get_user_display_name(user_id)
+        welcome_text = f"{user_name}您好 我是 Ethereal Flower拾若花藝的花藝師polly,感謝您加入好友 🌙✨很高興為您服務\n\n✔️ 花藝課程 & 花禮服務\n想了解更多 花藝課程 或 購買花禮？\n歡迎點選下方選單，參考官網，找到最適合您的花藝體驗與禮物！\n\n✔️ 客製花禮服務 ❤️❤️❤️\n我們不提供圖片複製其他花藝師的作品，但歡迎您提供：\n✅ 預算\n✅ 喜愛的色系\n✅ 偏好的花材與尺寸\n讓我們為您打造獨一無二的專屬花禮！\n\n如果您喜歡 Ethereal Flowers 拾若花藝 的設計風格，請放心交給我們，讓花朵為您傳遞最美好的心意！💐✨\n\n📍 工作室地址：新竹市和平路142號8樓\n（工作室採預約制，如需自取請先預約，以免撲空喔！）"
+        
         menu = create_admin_menu() if is_admin(user_id) else create_main_menu()
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=reply_text, quick_reply=menu)
+            TextSendMessage(text=welcome_text, quick_reply=menu)
         )
     
     # 預約取花功能
@@ -1025,6 +1454,21 @@ def handle_message(event):
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="📝 請提供您的姓名：")
+        )
+    
+    # 現貨款和訂製款選擇
+    elif user_message in ["現貨款", "我要現貨", "我要現貨款"]:
+        reply_text = "現貨款需要依照門市現場狀況為主哦～請稍等一下 晚點拍給您看💓"
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_text, quick_reply=create_main_menu())
+        )
+    
+    elif user_message in ["訂製款", "我要訂製", "我要訂製款"]:
+        user_states[user_id] = "waiting_custom_name"
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="🎨 好的！讓我為您安排訂製花禮。\n\n請先提供您的姓名：")
         )
     
     # 管理員功能
@@ -1203,11 +1647,22 @@ def handle_message(event):
             TextSendMessage(text=reply_text, quick_reply=create_delivery_menu())
         )
     
-    elif user_message == "自取":
-        reply_text = f"🏃 {service_info['自取']}"
+    elif user_message == "來店自取":
+        reply_text = "🏃 我們的工作室採預約制（地址：新竹市和平路142號8樓）要來之前一定要預約哦～需要幫您預約嗎？"
+        quick_reply = QuickReply(items=[
+            QuickReplyButton(action=MessageAction(label="✅ 預約來店", text="預約來店")),
+            QuickReplyButton(action=MessageAction(label="🔙 回主選單", text="主選單")),
+        ])
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=reply_text, quick_reply=create_delivery_menu())
+            TextSendMessage(text=reply_text, quick_reply=quick_reply)
+        )
+    
+    elif user_message == "預約來店":
+        user_states[user_id] = "waiting_visit_name"
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="📝 好的！讓我為您安排來店預約。\n\n請先提供您的姓名：")
         )
     
     # 花藝課程
@@ -1308,10 +1763,14 @@ def handle_message(event):
                 TextSendMessage(text=reply_text, quick_reply=create_delivery_menu())
             )
         elif any(keyword in user_message for keyword in ["自取", "取貨", "自己拿"]):
-            reply_text = f"🏃 {service_info['自取']}"
+            reply_text = "🏃 我們的工作室採預約制（地址：新竹市和平路142號8樓）要來之前一定要預約哦～需要幫您預約嗎？"
+            quick_reply = QuickReply(items=[
+                QuickReplyButton(action=MessageAction(label="✅ 預約來店", text="預約來店")),
+                QuickReplyButton(action=MessageAction(label="🔙 回主選單", text="主選單")),
+            ])
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text=reply_text, quick_reply=create_delivery_menu())
+                TextSendMessage(text=reply_text, quick_reply=quick_reply)
             )
         # 預約相關關鍵字 - 只有明確的預約意圖才觸發
         elif any(phrase in user_message for phrase in ["我想預約", "我要預約", "我要預定", "我想預定", "我要預訂", "我想預訂", "幫我預約", "想要預約"]):
@@ -1345,11 +1804,11 @@ def handle_message(event):
                 event.reply_token,
                 TextSendMessage(text=reply_text, quick_reply=create_course_menu())
             )
-        elif any(keyword in user_message for keyword in ["訂花", "花束", "買花束", "買花", "花禮", "訂購", "購買", "花"]):
-            reply_text = "🌸 沒問題呀～你想要現貨款還是訂製款呢？\n\n🛍️ 現貨款：現有作品，可立即取貨\n🎨 訂製款：專屬設計，3-7個工作天完成\n\n歡迎告訴我你的需求！"
+        elif any(keyword in user_message for keyword in ["訂花", "花束", "買花束", "買花", "花禮", "訂購", "購買", "要花", "想買花", "想訂花"]):
+            reply_text = "沒問題呀～我們有現貨款以及訂製款\n- 現貨款：現有作品，可立即取貨\n- 訂製款：依照您的需求專屬設計，大概需要3-7個工作天完成\n請問你想要哪種呢？"
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text=reply_text, quick_reply=create_service_menu())
+                TextSendMessage(text=reply_text, quick_reply=create_order_type_menu())
             )
         elif any(keyword in user_message for keyword in ["價格", "價錢", "費用", "多少錢", "收費"]):
             reply_text = "💰 關於價格資訊，因為每個作品的花材、大小、複雜度不同，建議您直接私訊告訴我們您的需求，我們會為您提供詳細的報價喔！"
